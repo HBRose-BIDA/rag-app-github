@@ -1,0 +1,5 @@
+# Ignore backend data and secrets
+backend/documents/
+__pycache__/
+*.pyc
+.env

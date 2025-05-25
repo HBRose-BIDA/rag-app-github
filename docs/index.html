@@ -23,7 +23,7 @@
       const question = document.getElementById("question").value;
       document.getElementById("answer").textContent = "Loading...";
       try {
-        const response = await fetch("http://5.161.224.212/query", {
+        const response = await fetch("https://hbr-bida.duckdns.org/query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ question })

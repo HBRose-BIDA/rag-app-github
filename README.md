@@ -1,120 +1,102 @@
+# RAG App (Retrieval-Augmented Generation)
 
-# RAG App – Document-Based Question Answering
+This is a document-grounded question-answering backend application built with FastAPI and OpenAI's GPT API. It uses embedded document chunks to answer questions with factual accuracy — no hallucinations — and provides grounded responses sourced from real documents.
 
-This project delivers a secure, low-cost, document-grounded Q&A system using:
+## 📌 Features
 
-* 🧠 OpenAI GPT-3.5
-* 🔍 FAISS vector search
-* 📄 Document embedding via sentence-transformers
-* 🌐 FastAPI backend hosted on Hetzner
-* 🖼️ Static frontend hosted via GitHub Pages
+* 🔍 Query over real documents (PDF, DOCX, PPTX, XLSX, SQL, Python, etc.)
+* 📄 Returns grounded answers with document context
+* 🚀 FastAPI backend served by Uvicorn
+* 💡 Clean static UI (optional `index.html`)
+* 🧠 Uses OpenAI embeddings + GPT for generation
 
----
+## 📂 Project Structure
 
-## ✅ Live Demo
-
-* **Frontend (GitHub Pages):**
-
-  [https://hbrose-bida.github.io/rag-app-github/](https://hbrose-bida.github.io/rag-app-github/)
-* **Backend API (Hetzner):**
-
-  [https://hbr-bida.duckdns.org/query](https://hbr-bida.duckdns.org/query)
-
----
-
-## 🛍️ How It Works
-
-1. Documents (`.pdf`, `.docx`, `.pptx`, `.xlsx`) are uploaded to a private server
-2. On app startup, documents are embedded and indexed using FAISS
-3. User submits a natural-language question via the frontend
-4. The backend searches for top matching chunks
-5. The selected chunks are sent to OpenAI GPT-3.5 for answer generation
-6. The answer is returned to the frontend in real time
-
----
-
-## 📁 Repo Structure
-
-```plaintext
-rag-app-github/
-├── docs/           # GitHub Pages frontend
-│   └── index.html
-│
-├── backend/        # FastAPI backend (runs on Hetzner)
-│   ├── rag.py
-│   ├── start.sh
-│   ├── requirements.txt
-│   └── documents/  # Not committed; ignored via .gitignore
-│
-├── .gitignore
-└── README.md
+```
+rag-app/
+├── rag.py              # Main FastAPI app with `/ask` endpoint
+├── start.sh            # Startup script for systemd or manual run
+├── requirements.txt    # Python dependencies
+├── index.html          # Static frontend (optional)
+├── deploy/             # Deployment configs (Nginx, systemd, etc.)
+│   └── rag-app.conf    # Nginx reverse proxy config (optional)
+└── .env.example        # Sample environment config (excluded in real deploy)
 ```
 
----
+## ⚙️ Requirements
 
-## 🚀 Backend Setup (on Hetzner VPS)
+* Python 3.10+
+* OpenAI API Key
+* Uvicorn / FastAPI
+* (Optional) Nginx and systemd for production hosting
+
+## 🚀 Running the App
+
+### 1. Install dependencies
 
 ```bash
-cd backend
-pip3 install -r requirements.txt
-systemctl start rag-app
+pip install -r requirements.txt
 ```
 
-* App listens on `localhost:8000`
-* NGINX proxies traffic from `https://hbr-bida.duckdns.org/`
-* OpenAI API key is set via systemd environment (not in code)
+### 2. Set environment variables
 
----
+Create a `.env` file using `.env.example` as a guide:
 
-## 🔐 API Key Management
-
-In `/etc/systemd/system/rag-app.service`, include:
-
-```ini
-Environment=OPENAI_API_KEY=sk-...
+```env
+OPENAI_API_KEY=your-key-here
+MODEL_NAME=gpt-4
 ```
 
-Then reload and restart:
+### 3. Start the server
 
 ```bash
-systemctl daemon-reexec
-systemctl daemon-reload
-systemctl restart rag-app
+bash start.sh
 ```
 
----
+Or manually:
 
-## 🛡️ HTTPS + Domain
-
-* NGINX reverse proxy on port 443 (HTTPS)
-* Certbot via Let's Encrypt
-* Uses DuckDNS subdomain: `hbr-bida.duckdns.org`
-
----
-
-## 🥮 Test It
-
-Ask:
-
-```
-What is one element of ethics?
+```bash
+python rag.py --serve
 ```
 
-You’ll receive a real, document-grounded OpenAI response.
+## 🌐 Deployment (Optional)
 
----
+You can use `Nginx` + `systemd` to run this as a background service.
 
-## 🛠️ Technologies Used
+Example:
 
-* FastAPI + Uvicorn
-* FAISS (vector similarity search)
-* SentenceTransformers (`all-MiniLM-L6-v2`)
-* OpenAI GPT-3.5 API
-* NGINX + Certbot (HTTPS)
-* GitHub Pages (frontend)
+* Nginx config: `deploy/rag-app.conf`
+* Systemd unit: `rag-app.service` (optional)
 
----
+## 🧪 Sample Usage
 
-## 📄 License
+Send a POST request to the `/ask` endpoint:
 
-This project is for educational or internal demonstration purposes. MIT-style license optional.
+```bash
+curl -X POST http://<your-server>/ask \
+     -H "Content-Type: application/json" \
+     -d '{"question": "What experience does the candidate have with SQL?"}'
+```
+
+The server returns:
+
+```json
+{
+  "answer": "The candidate has used SQL to join and query customer and transaction tables in multiple academic and professional settings...",
+  "sources": ["doc1.docx", "project_summary.pdf"]
+}
+```
+
+## 🛡️ Notes
+
+* This app is designed for read-only usage over pre-approved documents.
+* All documents should be embedded in advance and stored securely.
+* Do **not** upload documents containing sensitive or personal data to public repositories.
+
+## 🗾️ License
+
+MIT License – feel free to adapt and reuse with credit.
+
+## 😋 Author
+
+Rudy Rose – created for a recruiter-facing RAG prototype.

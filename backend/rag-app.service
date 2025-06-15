@@ -1,0 +1,14 @@
+[Unit]
+Description=RAG App Backend (FastAPI)
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root/rag-app
+ExecStart=/root/rag-app/start.sh
+Restart=always
+RestartSec=5
+EnvironmentFile=/root/rag-app/.env
+
+[Install]
+WantedBy=multi-user.target

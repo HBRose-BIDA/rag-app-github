@@ -1,131 +1,90 @@
 import os
+import sys
+import uvicorn
 import openai
 import faiss
-import pickle
-import uvicorn
+import numpy as np
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from PyPDF2 import PdfReader
-from pptx import Presentation
 from docx import Document
-from sentence_transformers import SentenceTransformer
-from typing import List
 
-# ----------------------- CONFIG -----------------------
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
-CHUNK_SIZE = 500
-CHUNK_OVERLAP = 50
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# ----------------------- FASTAPI -----------------------
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-class Question(BaseModel):
-    question: str
+# Load and process documents
+def load_documents(directory):
+    documents = []
+    for filename in os.listdir(directory):
+        if filename.endswith(".docx"):
+            path = os.path.join(directory, filename)
+            doc = Document(path)
+            text = "\n".join(p.text for p in doc.paragraphs)
+            documents.append((filename, text))
+    return documents
 
-# ----------------------- UTILS -----------------------
-def chunk_text(text: str, chunk_size: int, overlap: int) -> List[str]:
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
-        start += chunk_size - overlap
-    return chunks
+# Embed using OpenAI
+def embed_documents(texts):
+    return [openai.Embedding.create(input=[text], model="text-embedding-ada-002")["data"][0]["embedding"] for text in texts]
 
-def load_documents(directory: str):
-    docs = []
-    sources = []
-    for root, _, files in os.walk(directory):
-        for file in files:
-            path = os.path.join(root, file)
-            ext = os.path.splitext(file)[1].lower()
-            try:
-                if ext == ".pdf":
-                    reader = PdfReader(path)
-                    text = "\n".join(page.extract_text() for page in reader.pages if page.extract_text())
-                elif ext == ".docx":
-                    doc = Document(path)
-                    text = "\n".join(paragraph.text for paragraph in doc.paragraphs)
-                elif ext == ".pptx":
-                    prs = Presentation(path)
-                    text = "\n".join(shape.text for slide in prs.slides for shape in slide.shapes if hasattr(shape, "text"))
-                elif ext == ".txt":
-                    with open(path, "r", encoding="utf-8") as f:
-                        text = f.read()
-                elif ext == ".xlsx":
-                    import openpyxl
-                    wb = openpyxl.load_workbook(path, data_only=True)
-                    text = "\n".join(str(cell.value) for sheet in wb.worksheets for row in sheet.iter_rows() for cell in row if cell.value)
-                else:
-                    continue
-                for chunk in chunk_text(text, CHUNK_SIZE, CHUNK_OVERLAP):
-                    docs.append(chunk)
-                    sources.append(file)
-            except Exception as e:
-                print(f"Failed to process {path}: {e}")
-    return docs, sources
-
-def build_faiss_index(embeddings):
+# Build FAISS index
+def build_index(embeddings):
+    if not embeddings:
+        print("❌ No embeddings found.")
+        sys.exit(1)
     dim = len(embeddings[0])
     index = faiss.IndexFlatL2(dim)
-    index.add(embeddings)
+    index.add(np.array(embeddings).astype("float32"))
     return index
 
-def query_rag(question, index, chunks, sources, model, api_key):
-    question_embedding = model.encode([question])
-    scores, indices = index.search(question_embedding, k=5)
-    retrieved = [chunks[i] for i in indices[0]]
-    context = "\n\n".join(retrieved)
+# Load, embed, and index
+print("Loading documents...")
+docs = load_documents("./docs")
+print(f"Loaded {len(docs)} documents")
 
-    openai.api_key = api_key
-    response = openai.chat.completions.create(
+if not docs:
+    print("❌ No documents found. Exiting.")
+    sys.exit(1)
+
+print("Embedding documents...")
+texts = [d[1] for d in docs]
+embeddings = embed_documents(texts)
+
+print("Building FAISS index...")
+index = build_index(embeddings)
+
+# Define /ask route
+@app.post("/ask")
+async def ask(request: Request):
+    data = await request.json()
+    question = data.get("question", "")
+    if not question:
+        return {"answer": "No question provided."}
+
+    q_embedding = openai.Embedding.create(input=[question], model="text-embedding-ada-002")["data"][0]["embedding"]
+    D, I = index.search(np.array([q_embedding]).astype("float32"), k=3)
+    context = "\n\n".join([docs[i][1] for i in I[0] if i < len(docs)])
+
+    response = openai.ChatCompletion.create(
         model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
-        ]
+            {"role": "user", "content": f"Use the following documents:\n\n{context}\n\nQuestion: {question}"},
+        ],
+        temperature=0.2,
     )
-    return response.choices[0].message.content
 
-# ----------------------- STARTUP -----------------------
-print("Loading embedding model...")
-embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-print("Loading documents...")
-docs, doc_sources = load_documents("docs")
-print(f"Loaded {len(docs)} documents")
+    return {"answer": response.choices[0].message["content"].strip()}
 
-print("Embedding documents...")
-doc_embeddings = embedding_model.encode(docs, show_progress_bar=True)
-print("Building FAISS index...")
-index = build_faiss_index(doc_embeddings)
-
-# ----------------------- ENDPOINT -----------------------
-@app.post("/ask")
-async def ask(q: Question, request: Request):
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return {"error": "Missing OpenAI API Key"}
-    try:
-        result = query_rag(q.question, index, docs, doc_sources, embedding_model, api_key)
-        return {"answer": result}
-    except Exception as e:
-        return {"error": str(e)}
-
-# ----------------------- CLI ENTRY -----------------------
+# Serve if requested
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="RAG Loader")
-    parser.add_argument("--serve", action="store_true", help="Start API server")
-    args = parser.parse_args()
-
-    if not args.serve:
+    if "--serve" in sys.argv:
+        uvicorn.run(app, host="0.0.0.0", port=8000)
+    else:
         print("Loaded documents without starting server.")
